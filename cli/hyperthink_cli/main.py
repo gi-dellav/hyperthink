@@ -19,6 +19,9 @@ API key:
 
 import os
 import sys
+import warnings
+
+warnings.filterwarnings("ignore", message=".*Pydantic serializer.*")
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
@@ -61,7 +64,7 @@ def main() -> None:
     model_b = os.environ.get("HYPERTHINK_MODEL_B", DEFAULT_MODEL_B)
     system_prompt = os.environ.get("HYPERTHINK_SYSTEM", "You are a helpful assistant.")
 
-    mode = MODE_ASK
+    mode = MODE_SOLVE
     history: list[dict] = []
 
     session: PromptSession = PromptSession(

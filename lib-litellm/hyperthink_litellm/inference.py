@@ -3,6 +3,7 @@ inference.py — Low-level LiteLLM call and inference steps for HyperThink.
 """
 
 import json
+import warnings
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import litellm
@@ -62,7 +63,11 @@ class _InferenceMixin:
         if response_format is not None:
             kwargs["response_format"] = response_format
 
-        return litellm.completion(**kwargs)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", category=UserWarning, message="Pydantic serializer warnings"
+            )
+            return litellm.completion(**kwargs)
 
     # ------------------------------------------------------------------
     # Starter inference (Model A, first step)
