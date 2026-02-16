@@ -6,9 +6,14 @@ Modes:
     SOLVE — HyperThink dual-model scaffolding call
 
 Commands:
-    /clear          clear the terminal and reset conversation context
-    /mode ask|solve switch between modes
-    /help           show available commands
+    /clear               clear the terminal and reset conversation context
+    /mode ask|solve      switch between modes
+    /apikey <key>        set the OpenRouter API key for this session
+    /help                show available commands
+
+API key:
+    Set OPENROUTER_API_KEY in the environment before starting, or use the
+    /apikey command to set it interactively during the session.
 """
 
 import os
@@ -37,7 +42,9 @@ from hyperthink_litellm.defaults import DEFAULT_MODEL_A, DEFAULT_MODEL_B  # noqa
 MODE_ASK = "ASK"
 MODE_SOLVE = "SOLVE"
 
-_COMMANDS = ["/clear", "/mode ask", "/mode solve", "/help"]
+_COMMANDS = ["/clear", "/mode ask", "/mode solve", "/apikey", "/help"]
+
+_OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 
 console = Console()
 
@@ -117,9 +124,18 @@ def main() -> None:
     console.print(
         f"  Model A [cyan]{model_a}[/cyan]  ·  Model B [cyan]{model_b}[/cyan]"
     )
+    _api_key = os.environ.get(_OPENROUTER_KEY_ENV, "")
+    if _api_key:
+        _masked = _api_key[:6] + "…" + _api_key[-4:]
+        console.print(f"  API key [green]{_masked}[/green] (from environment)")
+    else:
+        console.print(
+            f"  [yellow]No {_OPENROUTER_KEY_ENV} set.[/yellow] "
+            "Use [bold]/apikey <key>[/bold] to set it."
+        )
     console.print(
         "  [dim]/mode ask[/dim]  [dim]/mode solve[/dim]  "
-        "[dim]/clear[/dim]  [dim]/help[/dim]"
+        "[dim]/apikey[/dim]  [dim]/clear[/dim]  [dim]/help[/dim]"
     )
     console.rule()
     console.print()
@@ -172,6 +188,26 @@ def main() -> None:
                     console.print(f"[green]Switched to {mode} mode.[/green]")
                 continue
 
+            if cmd == "/apikey":
+                arg_raw = parts[1].strip() if len(parts) > 1 else ""
+                if not arg_raw:
+                    current = os.environ.get(_OPENROUTER_KEY_ENV, "")
+                    if current:
+                        _masked = current[:6] + "…" + current[-4:]
+                        console.print(
+                            f"Current API key: [green]{_masked}[/green]"
+                        )
+                    else:
+                        console.print(
+                            f"[yellow]No API key set.[/yellow] "
+                            f"Usage: [bold]/apikey <key>[/bold]"
+                        )
+                else:
+                    os.environ[_OPENROUTER_KEY_ENV] = arg_raw
+                    _masked = arg_raw[:6] + "…" + arg_raw[-4:]
+                    console.print(f"[green]API key updated:[/green] {_masked}")
+                continue
+
             if cmd == "/help":
                 console.print()
                 console.print("[bold]Commands[/bold]")
@@ -182,6 +218,10 @@ def main() -> None:
                 console.print(
                     "  [yellow]/mode solve[/yellow]   "
                     "HyperThink dual-model scaffolding"
+                )
+                console.print(
+                    "  [yellow]/apikey <key>[/yellow] "
+                    "set the OpenRouter API key for this session"
                 )
                 console.print(
                     "  [yellow]/clear[/yellow]        "
