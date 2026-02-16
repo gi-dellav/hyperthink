@@ -10,6 +10,7 @@ Commands:
     /mode ask|solve      switch between modes
     /apikey <key>        set the OpenRouter API key for this session
     /help                show available commands
+    /load <path>         load a file's contents into the conversation context
 
 API key:
     Set OPENROUTER_API_KEY in the environment before starting, or use the
@@ -19,9 +20,6 @@ API key:
 import os
 import sys
 
-import litellm
-from rich.console import Console
-from rich.markdown import Markdown
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.formatted_text import HTML
@@ -34,30 +32,16 @@ _LIB_PATH = os.path.abspath(
 if _LIB_PATH not in sys.path:
     sys.path.insert(0, _LIB_PATH)
 
-from hyperthink_litellm import HyperThink  # noqa: E402
 from hyperthink_litellm.defaults import DEFAULT_MODEL_A, DEFAULT_MODEL_B  # noqa: E402
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-
-MODE_ASK = "ASK"
-MODE_SOLVE = "SOLVE"
-
-_COMMANDS = ["/clear", "/mode ask", "/mode solve", "/apikey", "/help"]
-
-_OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
-
-console = Console()
-
-
-# ── HyperThink subclass with rich logging ─────────────────────────────────────
-
-
-class _RichHyperThink(HyperThink):
-    """HyperThink that routes _log() through the rich console."""
-
-    def _log(self, msg: str) -> None:
-        if self.logging_enabled:
-            console.log(f"[dim]{msg}[/dim]")
+from .constants import (
+    MODE_ASK,
+    MODE_SOLVE,
+    _COMMANDS,
+    _OPENROUTER_KEY_ENV,
+    console,
+)  # noqa: E402
+from .inference import _run_ask, _run_solve  # noqa: E402
 
 
 # ── Prompt helper ─────────────────────────────────────────────────────────────
@@ -67,39 +51,6 @@ def _prompt_text(mode: str) -> HTML:
     if mode == MODE_ASK:
         return HTML("<ansicyan><b>[ASK]</b></ansicyan> <ansiwhite>›</ansiwhite> ")
     return HTML("<ansimagenta><b>[SOLVE]</b></ansimagenta> <ansiwhite>›</ansiwhite> ")
-
-
-# ── Inference helpers ─────────────────────────────────────────────────────────
-
-
-def _run_ask(messages: list, model: str) -> str:
-    """Stream a direct LiteLLM inference; return the full response text."""
-    response = litellm.completion(model=model, messages=messages, stream=True)
-    full_text = ""
-    console.print()
-    for chunk in response:
-        delta = chunk.choices[0].delta.content
-        if delta:
-            full_text += delta
-            print(delta, end="", flush=True)
-    print()
-    console.print()
-    return full_text
-
-
-def _run_solve(messages: list, model_a: str, model_b: str) -> str:
-    """Run a HyperThink scaffolding query; return the final answer."""
-    ht = _RichHyperThink(
-        model_a=model_a,
-        model_b=model_b,
-        logging_enabled=True,
-    )
-    console.print()
-    result = ht.query(messages)
-    console.print()
-    console.print(Markdown(result))
-    console.print()
-    return result
 
 
 # ── Main REPL ─────────────────────────────────────────────────────────────────
@@ -194,9 +145,7 @@ def main() -> None:
                     current = os.environ.get(_OPENROUTER_KEY_ENV, "")
                     if current:
                         _masked = current[:6] + "…" + current[-4:]
-                        console.print(
-                            f"Current API key: [green]{_masked}[/green]"
-                        )
+                        console.print(f"Current API key: [green]{_masked}[/green]")
                     else:
                         console.print(
                             f"[yellow]No API key set.[/yellow] "
@@ -228,7 +177,43 @@ def main() -> None:
                     "clear terminal and reset conversation context"
                 )
                 console.print("  [yellow]/help[/yellow]         " "show this message")
+                console.print(
+                    "  [yellow]/load <path>[/yellow]   "
+                    "load a file into the conversation context"
+                )
                 console.print()
+                continue
+
+            if cmd == "/load":
+                arg_raw = parts[1].strip() if len(parts) > 1 else ""
+                if not arg_raw:
+                    console.print("Usage: [yellow]/load <filepath>[/yellow]")
+                    continue
+                path = os.path.expanduser(arg_raw)
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        content = fh.read()
+                except FileNotFoundError:
+                    console.print(f"[red]File not found:[/red] {arg_raw}")
+                    continue
+                except OSError as exc:
+                    console.print(f"[red]Cannot read file:[/red] {exc}")
+                    continue
+                history.append(
+                    {
+                        "role": "user",
+                        "content": f"[File loaded: {arg_raw}]\n\n{content}",
+                    }
+                )
+                history.append(
+                    {
+                        "role": "assistant",
+                        "content": f"File `{arg_raw}` loaded into context.",
+                    }
+                )
+                console.print(
+                    f"[green]Loaded:[/green] {arg_raw} ({len(content)} chars)"
+                )
                 continue
 
             console.print(
