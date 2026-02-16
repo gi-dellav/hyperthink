@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hyperthink-cli"
+version = "0.1.0"
+description = "HyperThink CLI chat agent"
+requires-python = ">=3.10"
+dependencies = [
+    "litellm>=1.0.0",
+    "hyperthink-litellm",
+    "prompt_toolkit>=3.0.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+hyperthink = "hyperthink_cli.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hyperthink_cli"]
+
+[tool.uv.sources]
+hyperthink-litellm = { path = "../lib-litellm", editable = true }
