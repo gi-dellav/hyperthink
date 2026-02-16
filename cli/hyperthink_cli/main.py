@@ -44,6 +44,7 @@ console = Console()
 
 # ── HyperThink subclass with rich logging ─────────────────────────────────────
 
+
 class _RichHyperThink(HyperThink):
     """HyperThink that routes _log() through the rich console."""
 
@@ -54,6 +55,7 @@ class _RichHyperThink(HyperThink):
 
 # ── Prompt helper ─────────────────────────────────────────────────────────────
 
+
 def _prompt_text(mode: str) -> HTML:
     if mode == MODE_ASK:
         return HTML("<ansicyan><b>[ASK]</b></ansicyan> <ansiwhite>›</ansiwhite> ")
@@ -61,6 +63,7 @@ def _prompt_text(mode: str) -> HTML:
 
 
 # ── Inference helpers ─────────────────────────────────────────────────────────
+
 
 def _run_ask(messages: list, model: str) -> str:
     """Stream a direct LiteLLM inference; return the full response text."""
@@ -94,12 +97,11 @@ def _run_solve(messages: list, model_a: str, model_b: str) -> str:
 
 # ── Main REPL ─────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     model_a = os.environ.get("HYPERTHINK_MODEL_A", DEFAULT_MODEL_A)
     model_b = os.environ.get("HYPERTHINK_MODEL_B", DEFAULT_MODEL_B)
-    system_prompt = os.environ.get(
-        "HYPERTHINK_SYSTEM", "You are a helpful assistant."
-    )
+    system_prompt = os.environ.get("HYPERTHINK_SYSTEM", "You are a helpful assistant.")
 
     mode = MODE_ASK
     history: list[dict] = []
@@ -185,10 +187,7 @@ def main() -> None:
                     "  [yellow]/clear[/yellow]        "
                     "clear terminal and reset conversation context"
                 )
-                console.print(
-                    "  [yellow]/help[/yellow]         "
-                    "show this message"
-                )
+                console.print("  [yellow]/help[/yellow]         " "show this message")
                 console.print()
                 continue
 
