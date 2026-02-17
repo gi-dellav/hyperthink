@@ -17,8 +17,8 @@ Quick start
 
 from .defaults import DEFAULT_MODEL_A, DEFAULT_MODEL_B
 from .hyperthink import HyperThink
-from .prompts import REVIEWER_PROMPT, STARTER_PROMPT
-from .schemas import ReviewerOutput, UsageStats
+from .prompts import PLANNER_PROMPT, REVIEWER_PROMPT, STARTER_PROMPT, SYNTHESIZER_PROMPT
+from .schemas import PlanOutput, ReviewerOutput, UsageStats
 from .state import AutoDecayingState
 from .tools import MATH_TOOLS, execute_math_tool
 
@@ -117,14 +117,75 @@ def query(
     return ht.query(messages)
 
 
+def plan_query(
+    messages: list,
+    *,
+    model_a: str = DEFAULT_MODEL_A,
+    model_b: str = DEFAULT_MODEL_B,
+    max_state_size: int = 17,
+    max_iterations: int | None = None,
+    tools: list | None = None,
+    tool_executors: dict | None = None,
+    max_tool_iterations: int = 10,
+    temp_a_start: float = 1.6,
+    temp_a_end: float = 0.2,
+    temp_a_anneal_steps: int | None = None,
+    temp_b: float = 0.0,
+    top_p_a: float = 0.95,
+    top_p_b: float = 0.2,
+    top_k_a: int | None = None,
+    top_k_b: int | None = None,
+    starter_prompt: str = STARTER_PROMPT,
+    reviewer_prompt: str = REVIEWER_PROMPT,
+    reasoning_effort_a: str | None = None,
+    reasoning_effort_b: str | None = None,
+    logging_enabled: bool = False,
+) -> str:
+    """
+    Execute a query using HyperThink plan mode.
+
+    Decomposes the query into subtasks, solves each with the full dual-model
+    scaffolding, then synthesizes the results into a final answer.
+
+    This is a stateless convenience wrapper around :meth:`HyperThink.plan_query`.
+    """
+    ht = HyperThink(
+        model_a=model_a,
+        model_b=model_b,
+        max_state_size=max_state_size,
+        max_iterations=max_iterations,
+        tools=tools,
+        tool_executors=tool_executors,
+        max_tool_iterations=max_tool_iterations,
+        temp_a_start=temp_a_start,
+        temp_a_end=temp_a_end,
+        temp_a_anneal_steps=temp_a_anneal_steps,
+        temp_b=temp_b,
+        top_p_a=top_p_a,
+        top_p_b=top_p_b,
+        top_k_a=top_k_a,
+        top_k_b=top_k_b,
+        starter_prompt=starter_prompt,
+        reviewer_prompt=reviewer_prompt,
+        reasoning_effort_a=reasoning_effort_a,
+        reasoning_effort_b=reasoning_effort_b,
+        logging_enabled=logging_enabled,
+    )
+    return ht.plan_query(messages)
+
+
 __all__ = [
     "HyperThink",
     "query",
+    "plan_query",
     "AutoDecayingState",
+    "PlanOutput",
     "ReviewerOutput",
     "UsageStats",
     "STARTER_PROMPT",
     "REVIEWER_PROMPT",
+    "PLANNER_PROMPT",
+    "SYNTHESIZER_PROMPT",
     "DEFAULT_MODEL_A",
     "DEFAULT_MODEL_B",
     "MATH_TOOLS",

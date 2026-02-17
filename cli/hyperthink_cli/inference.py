@@ -5,7 +5,7 @@ litellm.drop_params = True
 
 from hyperthink_litellm import HyperThink, UsageStats
 
-from .constants import console
+from .constants import MODE_PLAN, console
 
 
 class _RichHyperThink(HyperThink):
@@ -82,6 +82,31 @@ def _run_solve(
     )
     console.print()
     result = ht.query(messages)
+    console.print()
+    console.print(Markdown(result))
+    console.print()
+    console.print(f"[dim]{ht.last_usage}[/dim]")
+    console.print()
+    return result
+
+
+def _run_plan(
+    messages: list,
+    model_a: str,
+    model_b: str,
+    reasoning_effort_a: str | None = None,
+    reasoning_effort_b: str | None = None,
+) -> str:
+    """Decompose the query into subtasks, solve each, and synthesize; return the final answer."""
+    ht = _RichHyperThink(
+        model_a=model_a,
+        model_b=model_b,
+        reasoning_effort_a=reasoning_effort_a,
+        reasoning_effort_b=reasoning_effort_b,
+        logging_enabled=True,
+    )
+    console.print()
+    result = ht.plan_query(messages)
     console.print()
     console.print(Markdown(result))
     console.print()

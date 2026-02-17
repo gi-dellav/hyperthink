@@ -4,10 +4,11 @@ main.py — HyperThink CLI chat agent.
 Modes:
     ASK   — direct LiteLLM inference with live streaming
     SOLVE — HyperThink dual-model scaffolding call
+    PLAN  — decompose query into subtasks, solve each with HyperThink, synthesize
 
 Commands:
     /clear                           clear the terminal and reset conversation context
-    /mode ask|solve                  switch between modes
+    /mode ask|solve|plan             switch between modes
     /apikey <key>                    set the OpenRouter API key for this session
     /help                            show available commands
     /load <path>                     load a file's contents into the conversation context
@@ -40,12 +41,13 @@ from hyperthink_litellm.defaults import DEFAULT_MODEL_A, DEFAULT_MODEL_B  # noqa
 
 from .constants import (
     MODE_ASK,
+    MODE_PLAN,
     MODE_SOLVE,
     _COMMANDS,
     _OPENROUTER_KEY_ENV,
     console,
 )  # noqa: E402
-from .inference import _run_ask, _run_solve  # noqa: E402
+from .inference import _run_ask, _run_plan, _run_solve  # noqa: E402
 
 
 # ── Prompt helper ─────────────────────────────────────────────────────────────
@@ -54,6 +56,8 @@ from .inference import _run_ask, _run_solve  # noqa: E402
 def _prompt_text(mode: str) -> HTML:
     if mode == MODE_ASK:
         return HTML("<ansicyan><b>[ASK]</b></ansicyan> <ansiwhite>›</ansiwhite> ")
+    if mode == MODE_PLAN:
+        return HTML("<ansiyellow><b>[PLAN]</b></ansiyellow> <ansiwhite>›</ansiwhite> ")
     return HTML("<ansimagenta><b>[SOLVE]</b></ansimagenta> <ansiwhite>›</ansiwhite> ")
 
 
@@ -91,7 +95,7 @@ def main() -> None:
             "Use [bold]/apikey <key>[/bold] to set it."
         )
     console.print(
-        "  [dim]/mode ask[/dim]  [dim]/mode solve[/dim]  "
+        "  [dim]/mode ask[/dim]  [dim]/mode solve[/dim]  [dim]/mode plan[/dim]  "
         "[dim]/apikey[/dim]  [dim]/clear[/dim]  [dim]/help[/dim]"
     )
     console.rule()
@@ -128,14 +132,16 @@ def main() -> None:
                     console.print(
                         f"Current mode: [bold]{mode}[/bold]. "
                         "Usage: [yellow]/mode ask[/yellow] | "
-                        "[yellow]/mode solve[/yellow]"
+                        "[yellow]/mode solve[/yellow] | "
+                        "[yellow]/mode plan[/yellow]"
                     )
                     continue
                 new_mode = arg.upper()
-                if new_mode not in (MODE_ASK, MODE_SOLVE):
+                if new_mode not in (MODE_ASK, MODE_SOLVE, MODE_PLAN):
                     console.print(
                         f"[red]Unknown mode:[/red] '{arg}'. "
-                        "Use [yellow]ask[/yellow] or [yellow]solve[/yellow]."
+                        "Use [yellow]ask[/yellow], [yellow]solve[/yellow], "
+                        "or [yellow]plan[/yellow]."
                     )
                     continue
                 if new_mode == mode:
@@ -173,6 +179,10 @@ def main() -> None:
                 console.print(
                     "  [yellow]/mode solve[/yellow]   "
                     "HyperThink dual-model scaffolding"
+                )
+                console.print(
+                    "  [yellow]/mode plan[/yellow]    "
+                    "decompose query into subtasks, solve each, synthesize"
                 )
                 console.print(
                     "  [yellow]/apikey <key>[/yellow] "
@@ -299,6 +309,14 @@ def main() -> None:
             if mode == MODE_ASK:
                 msgs = [{"role": "system", "content": system_prompt}, *history]
                 answer = _run_ask(msgs, model_a, reasoning_effort=reasoning_effort_a)
+            elif mode == MODE_PLAN:
+                answer = _run_plan(
+                    list(history),
+                    model_a,
+                    model_b,
+                    reasoning_effort_a=reasoning_effort_a,
+                    reasoning_effort_b=reasoning_effort_b,
+                )
             else:
                 answer = _run_solve(
                     list(history),

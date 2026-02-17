@@ -13,13 +13,17 @@ Algorithm recap
 4. Steps 2–3 alternate until accepted or the iteration limit is reached.
 """
 
-from typing import Any, Callable, Dict, List, Optional
+import json
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import litellm
 
 from .checkpoint import _CheckpointMixin
 from .defaults import DEFAULT_MODEL_A, DEFAULT_MODEL_B
+from .helpers import _extract_json
 from .inference import _InferenceMixin
-from .prompts import REVIEWER_PROMPT, STARTER_PROMPT
-from .schemas import UsageStats
+from .prompts import PLANNER_PROMPT, REVIEWER_PROMPT, STARTER_PROMPT, SYNTHESIZER_PROMPT
+from .schemas import PlanOutput, UsageStats
 from .state import AutoDecayingState
 
 
@@ -285,3 +289,172 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
                 log=self._log if self.logging_enabled else None,
             )
             current_answer = result.output
+
+    # ------------------------------------------------------------------
+    # Plan mode
+    # ------------------------------------------------------------------
+
+    def _run_planner(self, messages: List[Dict[str, Any]]) -> PlanOutput:
+        """Use Model B to decompose the query into an ordered list of subtasks."""
+        planner_messages = [
+            {"role": "system", "content": PLANNER_PROMPT},
+            *messages,
+        ]
+        self._log(f"[HyperThink Plan] Planner → {self.model_b}")
+        try:
+            response = self._call(
+                model=self.model_b,
+                messages=planner_messages,
+                temperature=0.0,
+                top_p=self.top_p_b,
+                top_k=self.top_k_b,
+                reasoning_effort=self.reasoning_effort_b,
+                response_format={"type": "json_object"},
+            )
+        except litellm.exceptions.BadRequestError:
+            self._log("[HyperThink Plan] JSON response_format not supported, retrying without.")
+            response = self._call(
+                model=self.model_b,
+                messages=planner_messages,
+                temperature=0.0,
+                top_p=self.top_p_b,
+                top_k=self.top_k_b,
+                reasoning_effort=self.reasoning_effort_b,
+            )
+        content = response.choices[0].message.content
+        assert content and content.strip(), "Planner returned empty content"
+        data = json.loads(_extract_json(content))
+        return PlanOutput(**data)
+
+    def _run_synthesizer(
+        self,
+        original_messages: List[Dict[str, Any]],
+        task_results: List[Tuple[str, str]],
+    ) -> str:
+        """Synthesize all subtask results into a single final answer using Model A."""
+        tasks_block = "\n\n".join(
+            f"### Subtask {i}: {task}\n\n{result}"
+            for i, (task, result) in enumerate(task_results, 1)
+        )
+        original_query = original_messages[-1]["content"] if original_messages else ""
+        synthesis_content = (
+            f"## Original Query\n\n{original_query}\n\n"
+            f"## Subtask Results\n\n{tasks_block}"
+        )
+        synthesis_messages = [
+            {"role": "system", "content": SYNTHESIZER_PROMPT},
+            *original_messages[:-1],
+            {"role": "user", "content": synthesis_content},
+        ]
+        self._log(f"[HyperThink Plan] Synthesizer → {self.model_a}")
+        response = self._call(
+            model=self.model_a,
+            messages=synthesis_messages,
+            temperature=self.temp_a_end,
+            top_p=self.top_p_a,
+            top_k=self.top_k_a,
+            reasoning_effort=self.reasoning_effort_a,
+        )
+        content = response.choices[0].message.content
+        assert content and content.strip(), "Synthesizer returned empty content"
+        return content
+
+    def plan_query(self, messages: List[Dict[str, Any]]) -> str:
+        """
+        Execute a query using plan mode.
+
+        Steps
+        -----
+        1. Decompose the query into subtasks using Model B (planner).
+        2. Run each subtask through the full HyperThink dual-model scaffolding.
+        3. Synthesize all results into a final answer using Model A.
+
+        Parameters
+        ----------
+        messages : list[dict]
+            OpenAI-style message list for the user query.
+
+        Returns
+        -------
+        str
+            The final synthesized answer.
+        """
+        assert (
+            isinstance(messages, list) and len(messages) > 0
+        ), "messages must be a non-empty list"
+
+        # Fresh state and usage counters
+        self.state = AutoDecayingState(max_size=self.max_state_size)
+        self.iteration_count = 0
+        self._total_prompt_tokens = 0
+        self._total_completion_tokens = 0
+        self._total_cost_usd = 0.0
+
+        self._log("[HyperThink Plan] ── Planning ─────────────────────────────────")
+
+        # Step 1: Decompose
+        plan = self._run_planner(messages)
+        self.iteration_count += 1
+        self._log(f"[HyperThink Plan] {len(plan.tasks)} task(s) generated.")
+        for i, task in enumerate(plan.tasks, 1):
+            self._log(
+                f"[HyperThink Plan]   {i}. "
+                + (task[:100] + "…" if len(task) > 100 else task)
+            )
+
+        # Step 2: Execute each subtask through the full HyperThink scaffolding
+        task_results: List[Tuple[str, str]] = []
+        for i, task in enumerate(plan.tasks, 1):
+            self._log(
+                f"[HyperThink Plan] ── Task {i}/{len(plan.tasks)}: "
+                + (task[:80] + "…" if len(task) > 80 else task)
+            )
+            original_last = messages[-1]["content"] if messages else ""
+            subtask_content = (
+                f"Context from original query: {original_last}\n\n"
+                f"Your specific task ({i} of {len(plan.tasks)}): {task}"
+            )
+            subtask_messages = [*messages[:-1], {"role": "user", "content": subtask_content}]
+
+            # Use same class so subclasses (e.g. _RichHyperThink) propagate
+            subtask_ht = type(self)(
+                model_a=self.model_a,
+                model_b=self.model_b,
+                max_state_size=self.max_state_size,
+                max_iterations=self.max_iterations,
+                tools=self.tools,
+                tool_executors=self.tool_registry if self.tool_registry else None,
+                max_tool_iterations=self.max_tool_iterations,
+                temp_a_start=self.temp_a_start,
+                temp_a_end=self.temp_a_end,
+                temp_a_anneal_steps=self.temp_a_anneal_steps,
+                temp_b=self.temp_b,
+                top_p_a=self.top_p_a,
+                top_p_b=self.top_p_b,
+                top_k_a=self.top_k_a,
+                top_k_b=self.top_k_b,
+                starter_prompt=self.starter_prompt,
+                reviewer_prompt=self.reviewer_prompt,
+                reasoning_effort_a=self.reasoning_effort_a,
+                reasoning_effort_b=self.reasoning_effort_b,
+                logging_enabled=self.logging_enabled,
+            )
+            result = subtask_ht.query(subtask_messages)
+            task_results.append((task, result))
+
+            # Accumulate usage from subtask
+            self._total_prompt_tokens += subtask_ht._total_prompt_tokens
+            self._total_completion_tokens += subtask_ht._total_completion_tokens
+            self._total_cost_usd += subtask_ht._total_cost_usd
+            self.iteration_count += subtask_ht.iteration_count
+            self._log(
+                f"[HyperThink Plan] Task {i} done. "
+                f"Result length: {len(result)} chars."
+            )
+
+        # Step 3: Synthesize
+        self._log("[HyperThink Plan] ── Synthesis ────────────────────────────────")
+        final = self._run_synthesizer(messages, task_results)
+        self.iteration_count += 1
+        self._log(f"[HyperThink Plan] ── Done. {self.last_usage}")
+        return final
