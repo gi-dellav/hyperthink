@@ -21,7 +21,9 @@ class _InferenceMixin:
     # These attributes are set by HyperThink.__init__; declared here for type checkers.
     model_a: str
     model_b: str
-    temp_a: float
+    temp_a_start: float
+    temp_a_end: float
+    temp_a_anneal_steps: Optional[int]
     temp_b: float
     top_p_a: float
     top_p_b: float
@@ -35,6 +37,21 @@ class _InferenceMixin:
     logging_enabled: bool
 
     def _log(self, msg: str) -> None: ...  # implemented in HyperThink
+
+    # ------------------------------------------------------------------
+    # Annealing
+    # ------------------------------------------------------------------
+
+    def _anneal_temp_a(self, step: int) -> float:
+        """Return model A's annealed temperature at the given 0-indexed review step.
+
+        Uses a linear schedule from ``temp_a_start`` down to ``temp_a_end``
+        over ``temp_a_anneal_steps`` steps (default 10).  Beyond that the
+        temperature is clamped to ``temp_a_end``.
+        """
+        T = self.temp_a_anneal_steps if self.temp_a_anneal_steps is not None else 10
+        t = min(step, T)
+        return self.temp_a_end + (self.temp_a_start - self.temp_a_end) * (1.0 - t / T)
 
     # ------------------------------------------------------------------
     # Low-level inference
@@ -82,7 +99,7 @@ class _InferenceMixin:
         response = self._call(
             model=self.model_a,
             messages=messages,
-            temperature=self.temp_a,
+            temperature=self._anneal_temp_a(0),
             top_p=self.top_p_a,
             top_k=self.top_k_a,
             reasoning_effort=self.reasoning_effort_a,

@@ -37,8 +37,16 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
     max_iterations : int | None
         Hard cap on total inference calls.  When reached the current answer is
         returned as-is.  ``None`` means unlimited.
-    temp_a, temp_b : float
-        Sampling temperatures for model A and B.
+    temp_a_start : float
+        Starting temperature for model A (annealing schedule begins here).
+    temp_a_end : float
+        Final temperature model A anneals down to.
+    temp_a_anneal_steps : int | None
+        Number of review steps over which model A's temperature decays from
+        ``temp_a_start`` to ``temp_a_end``.  Uses a linear schedule.
+        Defaults to ``max_iterations`` when set, otherwise 10.
+    temp_b : float
+        Fixed sampling temperature for model B.
     top_p_a, top_p_b : float
         Top-p (nucleus sampling) values for model A and B.
     top_k_a, top_k_b : int | None
@@ -60,7 +68,9 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
         model_b: str = DEFAULT_MODEL_B,
         max_state_size: int = 17,
         max_iterations: Optional[int] = None,
-        temp_a: float = 1.2,
+        temp_a_start: float = 1.6,
+        temp_a_end: float = 0.2,
+        temp_a_anneal_steps: Optional[int] = None,
         temp_b: float = 0.0,
         top_p_a: float = 0.95,
         top_p_b: float = 0.2,
@@ -76,7 +86,12 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
         assert (
             max_iterations is None or max_iterations > 0
         ), "max_iterations must be a positive integer or None"
-        assert 0.0 <= temp_a, "temp_a must be non-negative"
+        assert 0.0 <= temp_a_start, "temp_a_start must be non-negative"
+        assert 0.0 <= temp_a_end, "temp_a_end must be non-negative"
+        assert temp_a_end <= temp_a_start, "temp_a_end must be <= temp_a_start"
+        assert (
+            temp_a_anneal_steps is None or temp_a_anneal_steps > 0
+        ), "temp_a_anneal_steps must be a positive integer or None"
         assert 0.0 <= temp_b, "temp_b must be non-negative"
         assert 0.0 < top_p_a <= 1.0, "top_p_a must be in (0, 1]"
         assert 0.0 < top_p_b <= 1.0, "top_p_b must be in (0, 1]"
@@ -91,7 +106,11 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
         self.model_b = model_b
         self.max_state_size = max_state_size
         self.max_iterations = max_iterations
-        self.temp_a = temp_a
+        self.temp_a_start = temp_a_start
+        self.temp_a_end = temp_a_end
+        self.temp_a_anneal_steps = (
+            temp_a_anneal_steps if temp_a_anneal_steps is not None else max_iterations
+        )
         self.temp_b = temp_b
         self.top_p_a = top_p_a
         self.top_p_b = top_p_b
@@ -154,25 +173,13 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
 
         # Reviewer cycle: B, A, B, A, …
         # reviewer_cycle[0] = Model B params, reviewer_cycle[1] = Model A params
+        # Model A's temperature is omitted here — it is computed per-step via annealing.
         reviewer_cycle = [
-            (
-                self.model_b,
-                self.temp_b,
-                self.top_p_b,
-                self.top_k_b,
-                self.reasoning_effort_b,
-                "B",
-            ),
-            (
-                self.model_a,
-                self.temp_a,
-                self.top_p_a,
-                self.top_k_a,
-                self.reasoning_effort_a,
-                "A",
-            ),
+            (self.model_b, self.temp_b, self.top_p_b, self.top_k_b, self.reasoning_effort_b, "B"),
+            (self.model_a, None,        self.top_p_a, self.top_k_a, self.reasoning_effort_a, "A"),
         ]
-        review_step = 0  # cycles through 0, 1, 0, 1, …
+        review_step = 0   # cycles through 0, 1, 0, 1, …
+        a_review_count = 0  # counts model-A review calls, used for annealing schedule
 
         while True:
             if (
@@ -185,9 +192,12 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
                 )
                 return current_answer
 
-            model, temp, top_p, top_k, reasoning_effort, label = reviewer_cycle[
+            model, _temp, top_p, top_k, reasoning_effort, label = reviewer_cycle[
                 review_step % 2
             ]
+            temp = self._anneal_temp_a(a_review_count) if label == "A" else self.temp_b
+            if label == "A":
+                self._log(f"[HyperThink] Model A temperature (annealed): {temp:.4f}")
             review_step += 1
 
             self._log(f"[HyperThink] Review #{review_step} → Model {label} ({model})")
@@ -201,6 +211,8 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
                 current_answer=current_answer,
             )
             self.iteration_count += 1
+            if label == "A":
+                a_review_count += 1
 
             if result.review_result:
                 self._log(

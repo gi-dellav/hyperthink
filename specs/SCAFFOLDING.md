@@ -5,7 +5,13 @@ HyperThink is an LLM scaffolding alghorithm that allows two models to run in a c
 ## I. Alghorithm
 
 We define the first model as A and the second model as B.
-We set the temperature of A to an higher value (by default, 1.2) and the temperature of B to 0 (or near).
+Model A uses a dynamic temperature following a simulated annealing schedule: it starts at 1.6 and decays toward 0.2 over the course of the review loop iterations. The temperature for step `t` out of `T` total steps is computed as:
+
+```
+temp_A(t) = 0.2 + (1.6 - 0.2) * (1 - t / T)
+```
+
+Model B has a fixed temperature of 0 (or near 0). Only model A has a non-zero dynamic temperature.
 We set the top_p of A to an higher value (by default, 0.95) and the top_p of B to a lower value (by default, 0.2).
 Both models must have their reasoning mode enabled.
 
