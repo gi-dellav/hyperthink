@@ -20,7 +20,7 @@ from .hyperthink import HyperThink
 from .prompts import PLANNER_PROMPT, REVIEWER_PROMPT, STARTER_PROMPT, SYNTHESIZER_PROMPT
 from .schemas import PlanOutput, ReviewerOutput, UsageStats
 from .state import AutoDecayingState
-from .tools import MATH_TOOLS, execute_math_tool
+from .tools import MATH_TOOLS, MCPClient, execute_math_tool
 
 
 def query(
@@ -190,4 +190,5 @@ __all__ = [
     "DEFAULT_MODEL_B",
     "MATH_TOOLS",
     "execute_math_tool",
+    "MCPClient",
 ]

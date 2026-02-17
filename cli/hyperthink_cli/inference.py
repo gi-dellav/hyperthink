@@ -71,6 +71,8 @@ def _run_solve(
     model_b: str,
     reasoning_effort_a: str | None = None,
     reasoning_effort_b: str | None = None,
+    tools: list | None = None,
+    tool_executors: dict | None = None,
 ) -> str:
     """Run a HyperThink scaffolding query; return the final answer."""
     ht = _RichHyperThink(
@@ -78,6 +80,8 @@ def _run_solve(
         model_b=model_b,
         reasoning_effort_a=reasoning_effort_a,
         reasoning_effort_b=reasoning_effort_b,
+        tools=tools,
+        tool_executors=tool_executors,
         logging_enabled=True,
     )
     console.print()
@@ -96,6 +100,8 @@ def _run_plan(
     model_b: str,
     reasoning_effort_a: str | None = None,
     reasoning_effort_b: str | None = None,
+    tools: list | None = None,
+    tool_executors: dict | None = None,
 ) -> str:
     """Decompose the query into subtasks, solve each, and synthesize; return the final answer."""
     ht = _RichHyperThink(
@@ -103,6 +109,8 @@ def _run_plan(
         model_b=model_b,
         reasoning_effort_a=reasoning_effort_a,
         reasoning_effort_b=reasoning_effort_b,
+        tools=tools,
+        tool_executors=tool_executors,
         logging_enabled=True,
     )
     console.print()

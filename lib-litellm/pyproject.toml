@@ -17,7 +17,8 @@ dependencies = [
 [project.optional-dependencies]
 math = ["sympy>=1.12"]
 search = ["duckduckgo-search>=6.0.0"]
-all = ["sympy>=1.12", "duckduckgo-search>=6.0.0"]
+mcp = ["mcp>=1.0.0"]
+all = ["sympy>=1.12", "duckduckgo-search>=6.0.0", "mcp>=1.0.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["hyperthink_litellm"]

@@ -13,6 +13,8 @@ Commands:
     /help                            show available commands
     /load <path>                     load a file's contents into the conversation context
     /reasoning-effort [a|b] <level>  set reasoning effort (low/medium/high/none)
+    /mcp <command> [args...]         connect to an MCP stdio server
+    /mcp disconnect                  close all active MCP connections
 
 API key:
     Set OPENROUTER_API_KEY in the environment before starting, or use the
@@ -38,6 +40,7 @@ if _LIB_PATH not in sys.path:
     sys.path.insert(0, _LIB_PATH)
 
 from hyperthink_litellm.defaults import DEFAULT_MODEL_A, DEFAULT_MODEL_B  # noqa: E402
+from hyperthink_litellm.tools.mcp import MCPClient, _MCP_AVAILABLE  # noqa: E402
 
 from .constants import (
     MODE_ASK,
@@ -73,6 +76,7 @@ def main() -> None:
     history: list[dict] = []
     reasoning_effort_a: str | None = None
     reasoning_effort_b: str | None = None
+    mcp_clients: list[MCPClient] = []
 
     session: PromptSession = PromptSession(
         history=InMemoryHistory(),
@@ -110,6 +114,8 @@ def main() -> None:
             continue
         except EOFError:
             console.print("[dim]Goodbye.[/dim]")
+            for c in mcp_clients:
+                c.close()
             break
 
         user_input = raw.strip()
@@ -200,6 +206,14 @@ def main() -> None:
                 console.print(
                     "  [yellow]/reasoning-effort [a|b] <level>[/yellow]  "
                     "set reasoning effort (low · medium · high · none)"
+                )
+                console.print(
+                    "  [yellow]/mcp <command> [args...][/yellow]  "
+                    "connect to an MCP stdio server and load its tools"
+                )
+                console.print(
+                    "  [yellow]/mcp disconnect[/yellow]  "
+                    "close all active MCP connections"
                 )
                 console.print()
                 continue
@@ -297,6 +311,56 @@ def main() -> None:
                 )
                 continue
 
+            if cmd == "/mcp":
+                if not _MCP_AVAILABLE:
+                    console.print(
+                        "[red]MCP support not installed.[/red] "
+                        "Run: [bold]pip install 'hyperthink-litellm[mcp]'[/bold]"
+                    )
+                    continue
+                mcp_arg_raw = parts[1].strip() if len(parts) > 1 else ""
+                if not mcp_arg_raw:
+                    if mcp_clients:
+                        console.print(
+                            f"[bold]{len(mcp_clients)}[/bold] MCP server(s) connected. "
+                            "Use [yellow]/mcp disconnect[/yellow] to close all."
+                        )
+                    else:
+                        console.print(
+                            "Usage: [yellow]/mcp <command> [args...][/yellow]  "
+                            "— connect to an MCP stdio server"
+                        )
+                    continue
+                mcp_parts = mcp_arg_raw.split()
+                if mcp_parts[0].lower() == "disconnect":
+                    if not mcp_clients:
+                        console.print("No MCP servers connected.")
+                    else:
+                        for c in mcp_clients:
+                            c.close()
+                        mcp_clients.clear()
+                        console.print("[green]All MCP connections closed.[/green]")
+                    continue
+                mcp_command = mcp_parts[0]
+                mcp_args = mcp_parts[1:]
+                console.print(
+                    f"Connecting to MCP server: [cyan]{mcp_command}[/cyan] "
+                    + " ".join(mcp_args)
+                )
+                try:
+                    client = MCPClient(mcp_command, mcp_args)
+                    client.connect()
+                    mcp_clients.append(client)
+                    tool_names = [t["function"]["name"] for t in client.get_tools()]
+                    console.print(
+                        f"[green]Connected.[/green] "
+                        f"Loaded [bold]{len(tool_names)}[/bold] tool(s): "
+                        + ", ".join(f"[cyan]{n}[/cyan]" for n in tool_names)
+                    )
+                except Exception as exc:
+                    console.print(f"[red]Failed to connect:[/red] {exc}")
+                continue
+
             console.print(
                 f"[red]Unknown command:[/red] {cmd}. "
                 "Type [yellow]/help[/yellow] for available commands."
@@ -305,6 +369,10 @@ def main() -> None:
 
         # ── Inference ─────────────────────────────────────────────────────────
         history.append({"role": "user", "content": user_input})
+        mcp_tools = [t for c in mcp_clients for t in c.get_tools()]
+        mcp_executors = {k: v for c in mcp_clients for k, v in c.get_executors().items()}
+        active_tools = mcp_tools or None
+        active_executors = mcp_executors or None
         try:
             if mode == MODE_ASK:
                 msgs = [{"role": "system", "content": system_prompt}, *history]
@@ -316,6 +384,8 @@ def main() -> None:
                     model_b,
                     reasoning_effort_a=reasoning_effort_a,
                     reasoning_effort_b=reasoning_effort_b,
+                    tools=active_tools,
+                    tool_executors=active_executors,
                 )
             else:
                 answer = _run_solve(
@@ -324,6 +394,8 @@ def main() -> None:
                     model_b,
                     reasoning_effort_a=reasoning_effort_a,
                     reasoning_effort_b=reasoning_effort_b,
+                    tools=active_tools,
+                    tool_executors=active_executors,
                 )
             history.append({"role": "assistant", "content": answer})
         except KeyboardInterrupt:

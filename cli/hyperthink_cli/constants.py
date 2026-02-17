@@ -13,6 +13,7 @@ _COMMANDS = [
     "/help",
     "/load",
     "/reasoning-effort",
+    "/mcp",
 ]
 
 _OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"

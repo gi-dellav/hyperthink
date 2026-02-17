@@ -20,5 +20,8 @@ hyperthink = "hyperthink_cli.main:main"
 [tool.hatch.build.targets.wheel]
 packages = ["hyperthink_cli"]
 
+[project.optional-dependencies]
+mcp = ["hyperthink-litellm[mcp]"]
+
 [tool.uv.sources]
 hyperthink-litellm = { path = "../lib-litellm", editable = true }
