@@ -35,6 +35,9 @@ class _InferenceMixin:
     reasoning_effort_b: Optional[str]
     state: "AutoDecayingState"
     logging_enabled: bool
+    _total_prompt_tokens: int
+    _total_completion_tokens: int
+    _total_cost_usd: float
 
     def _log(self, msg: str) -> None: ...  # implemented in HyperThink
 
@@ -84,7 +87,22 @@ class _InferenceMixin:
             warnings.filterwarnings(
                 "ignore", category=UserWarning, message="Pydantic serializer warnings"
             )
-            return litellm.completion(**kwargs)
+            response = litellm.completion(**kwargs)
+
+        self._accumulate_usage(response)
+        return response
+
+    def _accumulate_usage(self, response: litellm.ModelResponse) -> None:
+        """Extract token usage and cost from a response and add to running totals."""
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        self._total_prompt_tokens += getattr(usage, "prompt_tokens", 0) or 0
+        self._total_completion_tokens += getattr(usage, "completion_tokens", 0) or 0
+        try:
+            self._total_cost_usd += litellm.completion_cost(completion_response=response)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Starter inference (Model A, first step)
@@ -145,7 +163,11 @@ class _InferenceMixin:
                 reasoning_effort=reasoning_effort,
                 response_format={"type": "json_object"},
             )
-        except Exception:
+        except litellm.exceptions.BadRequestError as exc:
+            self._log(
+                f"[HyperThink] JSON response_format not supported by provider "
+                f"({exc!r}), retrying without."
+            )
             response = self._call(
                 model=model,
                 messages=messages,

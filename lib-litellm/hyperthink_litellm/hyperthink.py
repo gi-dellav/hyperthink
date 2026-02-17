@@ -19,6 +19,7 @@ from .checkpoint import _CheckpointMixin
 from .defaults import DEFAULT_MODEL_A, DEFAULT_MODEL_B
 from .inference import _InferenceMixin
 from .prompts import REVIEWER_PROMPT, STARTER_PROMPT
+from .schemas import UsageStats
 from .state import AutoDecayingState
 
 
@@ -126,6 +127,11 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
         self.state: AutoDecayingState = AutoDecayingState(max_size=max_state_size)
         self.iteration_count: int = 0
 
+        # Cost / usage tracking — reset at the beginning of every query()
+        self._total_prompt_tokens: int = 0
+        self._total_completion_tokens: int = 0
+        self._total_cost_usd: float = 0.0
+
     # ------------------------------------------------------------------
     # Logging
     # ------------------------------------------------------------------
@@ -137,6 +143,16 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def last_usage(self) -> UsageStats:
+        """Token usage and estimated cost accumulated during the last :meth:`query` call."""
+        return UsageStats(
+            prompt_tokens=self._total_prompt_tokens,
+            completion_tokens=self._total_completion_tokens,
+            total_tokens=self._total_prompt_tokens + self._total_completion_tokens,
+            cost_usd=self._total_cost_usd,
+        )
 
     def query(self, messages: List[Dict[str, Any]]) -> str:
         """
@@ -161,6 +177,9 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
         # Fresh state for every query
         self.state = AutoDecayingState(max_size=self.max_state_size)
         self.iteration_count = 0
+        self._total_prompt_tokens = 0
+        self._total_completion_tokens = 0
+        self._total_cost_usd = 0.0
 
         self._log("[HyperThink] ── Starting query ──────────────────────────────")
 
@@ -175,8 +194,8 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
         # reviewer_cycle[0] = Model B params, reviewer_cycle[1] = Model A params
         # Model A's temperature is omitted here — it is computed per-step via annealing.
         reviewer_cycle = [
-            (self.model_b, self.temp_b, self.top_p_b, self.top_k_b, self.reasoning_effort_b, "B"),
-            (self.model_a, None,        self.top_p_a, self.top_k_a, self.reasoning_effort_a, "A"),
+            (self.model_b, self.top_p_b, self.top_k_b, self.reasoning_effort_b, "B"),
+            (self.model_a, self.top_p_a, self.top_k_a, self.reasoning_effort_a, "A"),
         ]
         review_step = 0   # cycles through 0, 1, 0, 1, …
         a_review_count = 0  # counts model-A review calls, used for annealing schedule
@@ -190,9 +209,10 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
                     f"[HyperThink] Iteration limit ({self.max_iterations}) reached. "
                     "Returning current answer."
                 )
+                self._log(f"[HyperThink] Usage: {self.last_usage}")
                 return current_answer
 
-            model, _temp, top_p, top_k, reasoning_effort, label = reviewer_cycle[
+            model, top_p, top_k, reasoning_effort, label = reviewer_cycle[
                 review_step % 2
             ]
             temp = self._anneal_temp_a(a_review_count) if label == "A" else self.temp_b
@@ -218,6 +238,7 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
                 self._log(
                     f"[HyperThink] ✓ Accepted after {self.iteration_count} inference(s)."
                 )
+                self._log(f"[HyperThink] Usage: {self.last_usage}")
                 return result.output
 
             self._log(

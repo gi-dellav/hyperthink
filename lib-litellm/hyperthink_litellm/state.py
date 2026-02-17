@@ -23,13 +23,14 @@ class AutoDecayingState:
         assert isinstance(new_notes, list), "new_notes must be a list"
         assert all(isinstance(n, str) for n in new_notes), "every note must be a string"
 
+        # Truncate incoming batch if it alone exceeds the capacity.
+        if len(new_notes) > self.max_size:
+            new_notes = new_notes[-self.max_size:]
+
         available = self.max_size - len(self.notes)
         overflow = len(new_notes) - available
 
         if overflow > 0:
-            assert overflow <= len(
-                self.notes
-            ), "Cannot evict more notes than currently stored"
             evict_indices = sorted(
                 random.sample(range(len(self.notes)), overflow), reverse=True
             )

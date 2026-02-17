@@ -1,5 +1,24 @@
+from dataclasses import dataclass
+
 from pydantic import BaseModel, Field
 from typing import List
+
+
+@dataclass
+class UsageStats:
+    """Token usage and estimated cost for a single HyperThink query."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost_usd: float
+
+    def __str__(self) -> str:
+        return (
+            f"{self.total_tokens} tokens "
+            f"(↑{self.prompt_tokens} prompt / ↓{self.completion_tokens} completion) · "
+            f"${self.cost_usd:.6f}"
+        )
 
 
 class ReviewerOutput(BaseModel):

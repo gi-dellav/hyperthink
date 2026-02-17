@@ -1,7 +1,7 @@
 import litellm
 from rich.markdown import Markdown
 
-from hyperthink_litellm import HyperThink
+from hyperthink_litellm import HyperThink, UsageStats
 
 from .constants import console
 
@@ -20,19 +20,46 @@ def _run_ask(
     reasoning_effort: str | None = None,
 ) -> str:
     """Stream a direct LiteLLM inference; return the full response text."""
-    kwargs: dict = {"model": model, "messages": messages, "stream": True}
+    kwargs: dict = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
     if reasoning_effort is not None:
         kwargs["reasoning_effort"] = reasoning_effort
     response = litellm.completion(**kwargs)
     full_text = ""
+    last_usage = None
     console.print()
     for chunk in response:
-        delta = chunk.choices[0].delta.content
+        delta = chunk.choices[0].delta.content if chunk.choices else None
         if delta:
             full_text += delta
             print(delta, end="", flush=True)
+        usage = getattr(chunk, "usage", None)
+        if usage:
+            last_usage = usage
     print()
     console.print()
+    if last_usage:
+        try:
+            cost = litellm.completion_cost(
+                model=model,
+                prompt_tokens=getattr(last_usage, "prompt_tokens", 0) or 0,
+                completion_tokens=getattr(last_usage, "completion_tokens", 0) or 0,
+            )
+            stats = UsageStats(
+                prompt_tokens=getattr(last_usage, "prompt_tokens", 0) or 0,
+                completion_tokens=getattr(last_usage, "completion_tokens", 0) or 0,
+                total_tokens=(getattr(last_usage, "prompt_tokens", 0) or 0)
+                + (getattr(last_usage, "completion_tokens", 0) or 0),
+                cost_usd=cost,
+            )
+            console.print(f"[dim]{stats}[/dim]")
+            console.print()
+        except Exception:
+            pass
     return full_text
 
 
@@ -55,5 +82,7 @@ def _run_solve(
     result = ht.query(messages)
     console.print()
     console.print(Markdown(result))
+    console.print()
+    console.print(f"[dim]{ht.last_usage}[/dim]")
     console.print()
     return result

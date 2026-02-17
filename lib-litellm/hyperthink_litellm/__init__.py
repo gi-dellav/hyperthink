@@ -18,7 +18,7 @@ Quick start
 from .defaults import DEFAULT_MODEL_A, DEFAULT_MODEL_B
 from .hyperthink import HyperThink
 from .prompts import REVIEWER_PROMPT, STARTER_PROMPT
-from .schemas import ReviewerOutput
+from .schemas import ReviewerOutput, UsageStats
 from .state import AutoDecayingState
 
 
@@ -29,7 +29,9 @@ def query(
     model_b: str = DEFAULT_MODEL_B,
     max_state_size: int = 17,
     max_iterations: int | None = None,
-    temp_a: float = 1.2,
+    temp_a_start: float = 1.6,
+    temp_a_end: float = 0.2,
+    temp_a_anneal_steps: int | None = None,
     temp_b: float = 0.0,
     top_p_a: float = 0.95,
     top_p_b: float = 0.2,
@@ -59,8 +61,15 @@ def query(
         Maximum notes in the auto-decaying state.
     max_iterations : int | None
         Hard cap on total inference calls; ``None`` = unlimited.
-    temp_a, temp_b : float
-        Sampling temperatures.
+    temp_a_start : float
+        Starting temperature for model A (annealing begins here).
+    temp_a_end : float
+        Final temperature model A anneals down to.
+    temp_a_anneal_steps : int | None
+        Steps over which model A's temperature decays; defaults to
+        ``max_iterations`` when set, otherwise 10.
+    temp_b : float
+        Fixed sampling temperature for model B.
     top_p_a, top_p_b : float
         Nucleus-sampling thresholds.
     top_k_a, top_k_b : int | None
@@ -84,7 +93,9 @@ def query(
         model_b=model_b,
         max_state_size=max_state_size,
         max_iterations=max_iterations,
-        temp_a=temp_a,
+        temp_a_start=temp_a_start,
+        temp_a_end=temp_a_end,
+        temp_a_anneal_steps=temp_a_anneal_steps,
         temp_b=temp_b,
         top_p_a=top_p_a,
         top_p_b=top_p_b,
@@ -104,6 +115,7 @@ __all__ = [
     "query",
     "AutoDecayingState",
     "ReviewerOutput",
+    "UsageStats",
     "STARTER_PROMPT",
     "REVIEWER_PROMPT",
     "DEFAULT_MODEL_A",
