@@ -20,6 +20,7 @@ from .hyperthink import HyperThink
 from .prompts import REVIEWER_PROMPT, STARTER_PROMPT
 from .schemas import ReviewerOutput, UsageStats
 from .state import AutoDecayingState
+from .tools import MATH_TOOLS, execute_math_tool
 
 
 def query(
@@ -29,6 +30,9 @@ def query(
     model_b: str = DEFAULT_MODEL_B,
     max_state_size: int = 17,
     max_iterations: int | None = None,
+    tools: list | None = None,
+    tool_executors: dict | None = None,
+    max_tool_iterations: int = 10,
     temp_a_start: float = 1.6,
     temp_a_end: float = 0.2,
     temp_a_anneal_steps: int | None = None,
@@ -93,6 +97,9 @@ def query(
         model_b=model_b,
         max_state_size=max_state_size,
         max_iterations=max_iterations,
+        tools=tools,
+        tool_executors=tool_executors,
+        max_tool_iterations=max_tool_iterations,
         temp_a_start=temp_a_start,
         temp_a_end=temp_a_end,
         temp_a_anneal_steps=temp_a_anneal_steps,
@@ -120,4 +127,6 @@ __all__ = [
     "REVIEWER_PROMPT",
     "DEFAULT_MODEL_A",
     "DEFAULT_MODEL_B",
+    "MATH_TOOLS",
+    "execute_math_tool",
 ]

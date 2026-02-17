@@ -4,7 +4,7 @@ inference.py — Low-level LiteLLM call and inference steps for HyperThink.
 
 import json
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import litellm
 
@@ -38,6 +38,10 @@ class _InferenceMixin:
     _total_prompt_tokens: int
     _total_completion_tokens: int
     _total_cost_usd: float
+    # Tool calling
+    tools: Optional[List[Dict[str, Any]]]
+    tool_registry: Dict[str, Callable[[Any], str]]
+    max_tool_iterations: int
 
     def _log(self, msg: str) -> None: ...  # implemented in HyperThink
 
@@ -69,6 +73,7 @@ class _InferenceMixin:
         top_k: Optional[int],
         reasoning_effort: Optional[str],
         response_format: Optional[Dict] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> litellm.ModelResponse:
         kwargs: Dict[str, Any] = {
             "model": model,
@@ -82,6 +87,8 @@ class _InferenceMixin:
             kwargs["reasoning_effort"] = reasoning_effort
         if response_format is not None:
             kwargs["response_format"] = response_format
+        if tools is not None:
+            kwargs["tools"] = tools
 
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -105,6 +112,136 @@ class _InferenceMixin:
             pass
 
     # ------------------------------------------------------------------
+    # Tool execution
+    # ------------------------------------------------------------------
+
+    def _dispatch_tool_call(self, tool_call) -> str:
+        """Execute a single tool call and return the string result."""
+        name: str = tool_call.function.name
+        raw_args: str = tool_call.function.arguments or "{}"
+
+        executor = self.tool_registry.get(name)
+        if executor is None:
+            return f"Error: unknown tool '{name}'."
+
+        try:
+            return executor(raw_args)
+        except Exception as exc:
+            return f"Error executing tool '{name}': {exc}"
+
+    def _run_tool_loop(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        temperature: float,
+        top_p: float,
+        top_k: Optional[int],
+        reasoning_effort: Optional[str],
+        response_format: Optional[Dict] = None,
+    ) -> litellm.ModelResponse:
+        """
+        Run an inference call followed by an agentic tool-call loop.
+
+        If ``self.tools`` is empty / None the loop reduces to a single
+        ``_call()`` invocation (identical behaviour to before).
+
+        After all tool calls have been satisfied the final LLM response
+        (which must contain plain text or JSON, never another tool call)
+        is returned.  ``response_format`` is only applied to the **final**
+        call so that intermediate tool-resolution calls are never forced
+        into JSON mode.
+
+        Parameters
+        ----------
+        model, messages, temperature, top_p, top_k, reasoning_effort:
+            Forwarded to ``_call()``.
+        response_format:
+            Applied only on the final (non-tool) call.
+        """
+        active_tools = self.tools if self.tools else None
+
+        # Local message list — we extend it with tool results without
+        # mutating the caller's messages.
+        local_messages = list(messages)
+
+        for iteration in range(self.max_tool_iterations + 1):
+            is_last_allowed = iteration >= self.max_tool_iterations
+
+            # On the last allowed iteration drop tools to force a text reply.
+            current_tools = None if is_last_allowed else active_tools
+            # Apply response_format only when we're no longer passing tools
+            # (some providers reject the combination).
+            current_fmt = response_format if current_tools is None else None
+
+            response = self._call(
+                model=model,
+                messages=local_messages,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                reasoning_effort=reasoning_effort,
+                response_format=current_fmt,
+                tools=current_tools,
+            )
+
+            # Check for tool calls
+            choice = response.choices[0]
+            tool_calls = getattr(choice.message, "tool_calls", None)
+
+            if not tool_calls:
+                # No tool calls — this is the final text/JSON response.
+                if current_fmt is None and response_format is not None:
+                    # We deferred response_format; re-request with it now.
+                    # Build the assistant turn without tool calls so the
+                    # context is complete, then do a final structured call.
+                    assistant_content = choice.message.content or ""
+                    if assistant_content.strip():
+                        local_messages.append(
+                            {"role": "assistant", "content": assistant_content}
+                        )
+                    response = self._call(
+                        model=model,
+                        messages=local_messages,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
+                        reasoning_effort=reasoning_effort,
+                        response_format=response_format,
+                        tools=None,
+                    )
+                return response
+
+            if is_last_allowed:
+                # Should not happen (tools=None forces text), but guard anyway.
+                return response
+
+            # Execute every tool call and collect results
+            self._log(
+                f"[HyperThink] Tool calls: "
+                + ", ".join(tc.function.name for tc in tool_calls)
+            )
+
+            # Append the assistant message that contains the tool_calls
+            local_messages.append(choice.message)
+
+            for tc in tool_calls:
+                result = self._dispatch_tool_call(tc)
+                self._log(
+                    f"[HyperThink] Tool '{tc.function.name}' → {result[:120]}"
+                    + ("…" if len(result) > 120 else "")
+                )
+                local_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result,
+                    }
+                )
+
+        # Unreachable, but satisfies type checkers
+        return response  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
     # Starter inference (Model A, first step)
     # ------------------------------------------------------------------
 
@@ -114,7 +251,7 @@ class _InferenceMixin:
             *user_messages,
         ]
         self._log(f"[HyperThink] Starter inference → {self.model_a}")
-        response = self._call(
+        response = self._run_tool_loop(
             model=self.model_a,
             messages=messages,
             temperature=self._anneal_temp_a(0),
@@ -154,7 +291,7 @@ class _InferenceMixin:
 
         # Request JSON output; fall back gracefully if the provider rejects it.
         try:
-            response = self._call(
+            response = self._run_tool_loop(
                 model=model,
                 messages=messages,
                 temperature=temperature,
@@ -168,7 +305,7 @@ class _InferenceMixin:
                 f"[HyperThink] JSON response_format not supported by provider "
                 f"({exc!r}), retrying without."
             )
-            response = self._call(
+            response = self._run_tool_loop(
                 model=model,
                 messages=messages,
                 temperature=temperature,

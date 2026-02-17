@@ -13,7 +13,7 @@ Algorithm recap
 4. Steps 2–3 alternate until accepted or the iteration limit is reached.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .checkpoint import _CheckpointMixin
 from .defaults import DEFAULT_MODEL_A, DEFAULT_MODEL_B
@@ -38,6 +38,19 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
     max_iterations : int | None
         Hard cap on total inference calls.  When reached the current answer is
         returned as-is.  ``None`` means unlimited.
+    tools : list[dict] | None
+        LiteLLM/OpenAI-compatible tool definitions to give to both the starter
+        and reviewer models.  Pass ``MATH_TOOLS`` from
+        ``hyperthink_litellm.tools`` to enable the SymPy math solver.
+        ``None`` (default) disables tool calling entirely.
+    tool_executors : dict[str, callable] | None
+        Mapping of tool name → executor callable.  Each callable receives the
+        raw JSON-encoded arguments string and must return a plain-text result.
+        When ``None`` (default) and ``tools`` contains the ``"math_solver"``
+        entry, the built-in SymPy executor is registered automatically.
+    max_tool_iterations : int
+        Maximum number of tool-call rounds per inference step before forcing
+        a plain-text reply.  Default 10.
     temp_a_start : float
         Starting temperature for model A (annealing schedule begins here).
     temp_a_end : float
@@ -69,6 +82,9 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
         model_b: str = DEFAULT_MODEL_B,
         max_state_size: int = 17,
         max_iterations: Optional[int] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_executors: Optional[Dict[str, Callable[[str], str]]] = None,
+        max_tool_iterations: int = 10,
         temp_a_start: float = 1.6,
         temp_a_end: float = 0.2,
         temp_a_anneal_steps: Optional[int] = None,
@@ -107,6 +123,26 @@ class HyperThink(_InferenceMixin, _CheckpointMixin):
         self.model_b = model_b
         self.max_state_size = max_state_size
         self.max_iterations = max_iterations
+
+        # Tool calling setup
+        self.tools: Optional[List[Dict[str, Any]]] = tools or None
+        self.max_tool_iterations: int = max_tool_iterations
+        self.tool_registry: Dict[str, Callable[[str], str]] = {}
+        if tool_executors:
+            self.tool_registry.update(tool_executors)
+        # Auto-register the built-in math_solver if the schema is present
+        # and no explicit executor was supplied for it.
+        if (
+            tools
+            and "math_solver" not in self.tool_registry
+            and any(
+                t.get("function", {}).get("name") == "math_solver"
+                for t in tools
+            )
+        ):
+            from .tools.math import execute_math_tool
+            self.tool_registry["math_solver"] = execute_math_tool
+
         self.temp_a_start = temp_a_start
         self.temp_a_end = temp_a_end
         self.temp_a_anneal_steps = (

@@ -1,6 +1,8 @@
 import litellm
 from rich.markdown import Markdown
 
+litellm.drop_params = True
+
 from hyperthink_litellm import HyperThink, UsageStats
 
 from .constants import console
