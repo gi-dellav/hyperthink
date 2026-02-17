@@ -6,11 +6,12 @@ Modes:
     SOLVE — HyperThink dual-model scaffolding call
 
 Commands:
-    /clear               clear the terminal and reset conversation context
-    /mode ask|solve      switch between modes
-    /apikey <key>        set the OpenRouter API key for this session
-    /help                show available commands
-    /load <path>         load a file's contents into the conversation context
+    /clear                           clear the terminal and reset conversation context
+    /mode ask|solve                  switch between modes
+    /apikey <key>                    set the OpenRouter API key for this session
+    /help                            show available commands
+    /load <path>                     load a file's contents into the conversation context
+    /reasoning-effort [a|b] <level>  set reasoning effort (low/medium/high/none)
 
 API key:
     Set OPENROUTER_API_KEY in the environment before starting, or use the
@@ -66,6 +67,8 @@ def main() -> None:
 
     mode = MODE_SOLVE
     history: list[dict] = []
+    reasoning_effort_a: str | None = None
+    reasoning_effort_b: str | None = None
 
     session: PromptSession = PromptSession(
         history=InMemoryHistory(),
@@ -184,7 +187,72 @@ def main() -> None:
                     "  [yellow]/load <path>[/yellow]   "
                     "load a file into the conversation context"
                 )
+                console.print(
+                    "  [yellow]/reasoning-effort [a|b] <level>[/yellow]  "
+                    "set reasoning effort (low · medium · high · none)"
+                )
                 console.print()
+                continue
+
+            if cmd == "/reasoning-effort":
+                _VALID_EFFORTS = ("low", "medium", "high", "none")
+                re_parts = (parts[1].split() if len(parts) > 1 else [])
+                if not re_parts:
+                    a_display = reasoning_effort_a or "none"
+                    b_display = reasoning_effort_b or "none"
+                    console.print(
+                        f"Reasoning effort — Model A: [cyan]{a_display}[/cyan]  "
+                        f"Model B: [cyan]{b_display}[/cyan]"
+                    )
+                    console.print(
+                        "Usage: [yellow]/reasoning-effort <level>[/yellow]  "
+                        "or [yellow]/reasoning-effort a|b <level>[/yellow]  "
+                        "(levels: low · medium · high · none)"
+                    )
+                    continue
+                if len(re_parts) == 1:
+                    level = re_parts[0].lower()
+                    if level not in _VALID_EFFORTS:
+                        console.print(
+                            f"[red]Unknown level:[/red] '{level}'. "
+                            "Choose from: low · medium · high · none"
+                        )
+                        continue
+                    reasoning_effort_a = None if level == "none" else level
+                    reasoning_effort_b = None if level == "none" else level
+                    console.print(
+                        f"[green]Reasoning effort set to[/green] [cyan]{level}[/cyan] "
+                        "for both models."
+                    )
+                elif len(re_parts) == 2:
+                    target, level = re_parts[0].lower(), re_parts[1].lower()
+                    if target not in ("a", "b"):
+                        console.print(
+                            f"[red]Unknown target:[/red] '{target}'. Use 'a' or 'b'."
+                        )
+                        continue
+                    if level not in _VALID_EFFORTS:
+                        console.print(
+                            f"[red]Unknown level:[/red] '{level}'. "
+                            "Choose from: low · medium · high · none"
+                        )
+                        continue
+                    value = None if level == "none" else level
+                    if target == "a":
+                        reasoning_effort_a = value
+                        console.print(
+                            f"[green]Model A reasoning effort:[/green] [cyan]{level}[/cyan]"
+                        )
+                    else:
+                        reasoning_effort_b = value
+                        console.print(
+                            f"[green]Model B reasoning effort:[/green] [cyan]{level}[/cyan]"
+                        )
+                else:
+                    console.print(
+                        "Usage: [yellow]/reasoning-effort <level>[/yellow]  "
+                        "or [yellow]/reasoning-effort a|b <level>[/yellow]"
+                    )
                 continue
 
             if cmd == "/load":
@@ -230,9 +298,15 @@ def main() -> None:
         try:
             if mode == MODE_ASK:
                 msgs = [{"role": "system", "content": system_prompt}, *history]
-                answer = _run_ask(msgs, model_a)
+                answer = _run_ask(msgs, model_a, reasoning_effort=reasoning_effort_a)
             else:
-                answer = _run_solve(list(history), model_a, model_b)
+                answer = _run_solve(
+                    list(history),
+                    model_a,
+                    model_b,
+                    reasoning_effort_a=reasoning_effort_a,
+                    reasoning_effort_b=reasoning_effort_b,
+                )
             history.append({"role": "assistant", "content": answer})
         except KeyboardInterrupt:
             console.print("\n[yellow]Interrupted.[/yellow]")

@@ -14,9 +14,16 @@ class _RichHyperThink(HyperThink):
             console.log(f"[dim]{msg}[/dim]")
 
 
-def _run_ask(messages: list, model: str) -> str:
+def _run_ask(
+    messages: list,
+    model: str,
+    reasoning_effort: str | None = None,
+) -> str:
     """Stream a direct LiteLLM inference; return the full response text."""
-    response = litellm.completion(model=model, messages=messages, stream=True)
+    kwargs: dict = {"model": model, "messages": messages, "stream": True}
+    if reasoning_effort is not None:
+        kwargs["reasoning_effort"] = reasoning_effort
+    response = litellm.completion(**kwargs)
     full_text = ""
     console.print()
     for chunk in response:
@@ -29,11 +36,19 @@ def _run_ask(messages: list, model: str) -> str:
     return full_text
 
 
-def _run_solve(messages: list, model_a: str, model_b: str) -> str:
+def _run_solve(
+    messages: list,
+    model_a: str,
+    model_b: str,
+    reasoning_effort_a: str | None = None,
+    reasoning_effort_b: str | None = None,
+) -> str:
     """Run a HyperThink scaffolding query; return the final answer."""
     ht = _RichHyperThink(
         model_a=model_a,
         model_b=model_b,
+        reasoning_effort_a=reasoning_effort_a,
+        reasoning_effort_b=reasoning_effort_b,
         logging_enabled=True,
     )
     console.print()
